@@ -14,7 +14,9 @@ const int pinDirR = 3;
 const int pinSpeedL = 5;
 const int pinSpeedR = 6;
 const int pinTrig = 13;
+const int pinButton = 12;
 const int tones[13] = {196,220,247,262,294,330,349,392,440,494,523,587,659};
+int preDistance = 0;      // 초음파 -1 때문에
 
 enum deviceNumber{
   FORWARD = 0,
@@ -28,7 +30,7 @@ enum deviceNumber{
 void setup(){
   Serial.begin(9600);
   Serial.flush();
-  initPorts();
+  //initPorts();
   delay(200);
   pinMode(pinBuzzer, OUTPUT);
   pinMode(pinSpeedL, OUTPUT);
@@ -37,6 +39,7 @@ void setup(){
   pinMode(pinDirR, OUTPUT);  
   pinMode(pinTrig, OUTPUT); // 출력용 핀으로 설정
   pinMode(pinEcho, INPUT);  // 입력용 핀으로 설정
+  pinMode(pinButton, INPUT);
 }
 
 void initPorts () {
@@ -69,6 +72,13 @@ void sendPinValues() {
   sendAnalogValue(5); // 오른쪽 라인감지
   sendAnalogValue(6); // 조도센서
   sendAnalogValue(7); // 오른쪽 벽감지
+
+  // sonar
+  int value = GetDistance();
+  Serial.write(B11000000
+               | ((1 & B111)<<3)
+               | ((value>>7) & B111));
+  Serial.write(value & B1111111);
 }
 
 void updateDigitalPort (char c) {
@@ -79,6 +89,8 @@ void updateDigitalPort (char c) {
       // is data end at this chunk
       if ((c>>5) & 1) {
         int port = (c >> 1) & B1111;
+        if(port == 12 ) return ;
+        
         setPortWritable(port);
         if (c & 1)
           digitalWrite(port, HIGH);
@@ -94,7 +106,8 @@ void updateDigitalPort (char c) {
     }
   } else {
     int port = (remainData >> 1) & B1111;
-    int value = ((remainData & 1) << 7) + (c & B1111111);
+    // 10000000(128) + 01111111(127)
+    int value = ((remainData & 1) << 7) + (c & B1111111); 
     if(port > 13){
       // 14 A0, 15 A1, 16 A2, 17 A3, 18 A4, 19 A5
       // A3: Buzzer(output)
@@ -107,9 +120,43 @@ void updateDigitalPort (char c) {
           tone(pinBuzzer, tones[value-1]); // 1 ~ 254
         }
       }else if(port == 14){
-        // 
-        move(MOTOR_L, FORWARD, value);
-        move(MOTOR_R, FORWARD, value);
+        //
+        int id = value >> 7;
+        int dir = (value >> 5) & B11;
+        int tmp = value & B11111;
+        if(value == 1){ // stop
+          move(MOTOR_L, FORWARD, 0);
+          move(MOTOR_R, FORWARD, 0);
+        }else{
+          if(id == 0 && dir == 0){ // forward
+            move(MOTOR_L, FORWARD, tmp*30);
+            move(MOTOR_R, FORWARD, tmp*30);
+          }
+          else if(id == 0 && dir == 1){ // backward
+            move(MOTOR_L, REVERSE, tmp*30);
+            move(MOTOR_R, REVERSE, tmp*30);
+          }
+          else if(id == 0 && dir == 2){ // left
+            move(MOTOR_L, REVERSE, tmp*30);
+            move(MOTOR_R, FORWARD, tmp*30);
+          }
+          else if(id == 0 && dir == 3){ // right
+            move(MOTOR_L, FORWARD, tmp*30);
+            move(MOTOR_R, REVERSE, tmp*30);
+          }
+          else if(id == 1 && dir == 0){ // left wheel
+            move(MOTOR_L, FORWARD, tmp*30);
+          }
+          else if(id == 1 && dir == 1){ // right wheel
+            move(MOTOR_R, FORWARD, tmp*30);
+          }
+          else if(id == 1 && dir == 2){ // left wheel+REVERSE
+            move(MOTOR_L, REVERSE, tmp*30);
+          }
+          else if(id == 1 && dir == 3){ // right wheel+REVERSE
+            move(MOTOR_R, REVERSE, tmp*30);
+          }
+        }        
       }
     }else{
       setPortWritable(port);
@@ -172,5 +219,18 @@ void move(int motor, int direction, int speed){
     digitalWrite(pinDirR, inPin1);
     analogWrite(pinSpeedR, speed);
   }
+}
+
+int GetDistance(){  
+  digitalWrite( pinTrig, LOW ); 
+  delayMicroseconds( 2 );   
+  digitalWrite( pinTrig, HIGH );
+  delayMicroseconds( 10 );  
+  digitalWrite( pinTrig, LOW ); 
+  int  duration = pulseIn( pinEcho, HIGH );
+  int  distance = (duration / 2) / 29.1;   
+  if(distance < 0 ) distance = preDistance;
+  preDistance = distance;
+  return  distance;
 }
 
